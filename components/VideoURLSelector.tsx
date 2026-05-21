@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { convertDropboxLink, isDropboxLink } from "../lib/dropbox";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ function urlLabel(url: string): string {
     const parsed = new URL(url);
     const host = parsed.hostname.replace("www.", "");
 
+    if (host.includes("dropbox.com") || host.includes("dropboxusercontent.com")) return "Dropbox video";
     if (host.includes("drive.google.com")) return "Google Drive video";
     if (host.includes("r2.cloudflarestorage.com") || host.includes("r2.dev"))
       return "Cloudflare R2 video";
@@ -115,10 +117,32 @@ export default function VideoURLSelector({
     setIsOpen(false);
   };
 
+  // ── Auto-convert Dropbox links on paste/change ─────────────────────────
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value;
+    
+    // Automatically detect and convert Dropbox links
+    if (isDropboxLink(value)) {
+      try {
+        const converted = convertDropboxLink(value);
+        if (converted !== value) {
+          value = converted;
+          // You could show a success message here if desired
+        }
+      } catch (err: any) {
+        setError(err.message || "Failed to convert Dropbox link");
+      }
+    }
+    
+    setUrlInput(value);
+    if (error) setError("");
+  };
+
   // ── Paste helper chips ─────────────────────────────────────────────────
   const exampleFormats = [
     { label: ".mp4", hint: "Direct MP4 link" },
     { label: ".webm", hint: "WebM video" },
+    { label: "Dropbox", hint: "Dropbox share link (auto-converts)" },
     { label: "R2", hint: "Cloudflare R2 URL" },
     { label: "GDrive", hint: "Google Drive link" },
   ];
@@ -193,10 +217,7 @@ export default function VideoURLSelector({
                 id="modal-video-url"
                 type="text"
                 value={urlInput}
-                onChange={(e) => {
-                  setUrlInput(e.target.value);
-                  if (error) setError("");
-                }}
+                onChange={handleUrlChange}
                 placeholder="https://example.com/video.mp4"
                 className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-300 outline-none focus:border-blue-500 text-gray-800 placeholder-gray-400 text-sm"
               />
@@ -223,7 +244,7 @@ export default function VideoURLSelector({
               <p className="text-xs text-gray-400 mt-3 leading-relaxed">
                 Paste a direct link to a video file. Supported sources include
                 direct <strong>.mp4</strong> / <strong>.webm</strong> URLs,
-                Cloudflare R2 signed URLs, and Google Drive shareable links.
+                Dropbox share links (auto-converted), Cloudflare R2 signed URLs, and Google Drive shareable links.
                 The video will reset to the beginning for all viewers.
               </p>
 

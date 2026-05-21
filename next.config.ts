@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
 
   // Environment variables exposed to the browser
   env: {
-    NEXT_PUBLIC_SOCKET_URL: process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:3001",
+    NEXT_PUBLIC_SOCKET_URL: process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://watchpartybackend-production.up.railway.app",
   },
 };
 

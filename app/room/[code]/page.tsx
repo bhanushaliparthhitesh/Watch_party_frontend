@@ -77,10 +77,60 @@ export default function RoomPage() {
     if (!isConnected) return;
 
     const unsubs = [
-      // Presence events (all receive the updated full array of users)
-      onEvent<Participant[]>("room-users", (data) => setParticipants(data)),
-      onEvent<Participant[]>("user-joined", (data) => setParticipants(data)),
-      onEvent<Participant[]>("user-left", (data) => setParticipants(data)),
+      // Presence events (with robust error handling and type validation)
+      onEvent<any>("room-state", (data) => {
+        try {
+          console.log("[Socket] room-state received:", data);
+          if (data && Array.isArray(data.users)) {
+            setParticipants(data.users);
+          } else if (Array.isArray(data)) {
+            setParticipants(data);
+          }
+        } catch (error) {
+          console.error("[Socket] Error handling room-state:", error);
+        }
+      }),
+      onEvent<any>("room-users", (data) => {
+        try {
+          console.log("[Socket] room-users received:", data);
+          if (data && Array.isArray(data.users)) {
+            setParticipants(data.users);
+          } else if (Array.isArray(data)) {
+            setParticipants(data);
+          }
+        } catch (error) {
+          console.error("[Socket] Error handling room-users:", error);
+        }
+      }),
+      onEvent<any>("user-joined", (data) => {
+        try {
+          console.log("[Socket] user-joined received:", data);
+          // Backend sends { username, users: [...] }, so we need to check data.users
+          if (data && Array.isArray(data.users)) {
+            setParticipants(data.users);
+          } else if (Array.isArray(data)) {
+            setParticipants(data);
+          } else {
+            console.warn("[Socket] Invalid data format for user-joined:", data);
+          }
+        } catch (error) {
+          console.error("[Socket] Error handling user-joined:", error);
+        }
+      }),
+      onEvent<any>("user-left", (data) => {
+        try {
+          console.log("[Socket] user-left received:", data);
+          if (data && Array.isArray(data.users)) {
+            setParticipants(data.users);
+          } else if (Array.isArray(data)) {
+            setParticipants(data);
+          } else {
+            console.warn("[Socket] Invalid data format for user-left:", data);
+          }
+        } catch (error) {
+          console.error("[Socket] Error handling user-left:", error);
+        }
+      }),
       
       onEvent<string>("video-url-changed", (url) => {
         setVideoUrl(url);
