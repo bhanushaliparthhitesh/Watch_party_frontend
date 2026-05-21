@@ -26,12 +26,9 @@ export interface SeekPayload {
 /** Payload for chat messages */
 export interface ChatPayload {
   roomCode: string;
-  message: {
-    id: string;
-    user: string;
-    text: string;
-    timestamp: number;
-  };
+  username: string;
+  text: string;
+  timestamp: number | string;
 }
 
 /** Payload for reactions (emoji bursts, etc.) */
