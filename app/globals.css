@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-brand: #7c3aed;
+    --color-brand-light: #a78bfa;
+    --color-brand-dark: #5b21b6;
+    --color-accent: #06b6d4;
+    --color-surface: #111827;
+    --color-surface-2: #1f2937;
+    --color-border: #374151;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: #030712;
+    font-family: var(--font-inter), system-ui, sans-serif;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #111827;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #7c3aed;
+  }
+}
+
+@layer utilities {
+  .gradient-brand {
+    background: linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%);
+  }
+
+  .gradient-brand-text {
+    background: linear-gradient(135deg, #a78bfa 0%, #67e8f9 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .glow-brand {
+    box-shadow: 0 0 40px rgba(124, 58, 237, 0.35);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 40px rgba(6, 182, 212, 0.25);
+  }
+}
