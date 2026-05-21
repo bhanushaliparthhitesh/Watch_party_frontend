@@ -63,7 +63,7 @@ export default function ChatSidebar({
   getCurrentVideoTime,
 }: ChatSidebarProps) {
   // ── Socket ──────────────────────────────────────────────────────────────
-  const { isConnected, emitChat, emitReaction, onEvent } = useSocket();
+  const { isConnected, emitChat, emitReaction, onEvent, socket } = useSocket();
 
   // ── Messages ────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -75,13 +75,22 @@ export default function ChatSidebar({
     { id: string; emoji: string; x: number; y: number }[]
   >([]);
 
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+
   // ── Listen for incoming chat messages ───────────────────────────────────
   useEffect(() => {
     if (!isConnected) return;
 
     const unsubs = [
       onEvent<any>("chat-message", (data) => {
+        console.log("Received 'chat-message' event:", data);
         try {
+          // If we immediately add our own message to state, we should skip it here to avoid duplicates
+          if (data.username === username || data.user === username) {
+            console.log("Skipping own message to prevent duplicate display");
+            return;
+          }
+          
           const msg: ChatMessage = {
             id: crypto.randomUUID(),
             user: data.username || data.user || "Unknown",
@@ -97,10 +106,27 @@ export default function ChatSidebar({
       onEvent<{ emoji: string; user: string }>("reaction", (data) => {
         spawnFloatingReaction(data.emoji);
       }),
+      onEvent<{ username: string }>("typing", (data) => {
+        if (data.username && data.username !== username) {
+          setTypingUsers((prev) => {
+            const next = new Set(prev);
+            next.add(data.username);
+            return next;
+          });
+          // Clear typing indicator after 3 seconds
+          setTimeout(() => {
+            setTypingUsers((prev) => {
+              const next = new Set(prev);
+              next.delete(data.username);
+              return next;
+            });
+          }, 3000);
+        }
+      }),
     ];
 
     return () => unsubs.forEach((fn) => fn());
-  }, [isConnected, onEvent]);
+  }, [isConnected, onEvent, username]);
 
   // ── Auto-scroll to latest message ──────────────────────────────────────
   useEffect(() => {
@@ -109,11 +135,14 @@ export default function ChatSidebar({
 
   // ── Send message ───────────────────────────────────────────────────────
   const sendMessage = useCallback(() => {
+    console.log("Send button clicked");
     const text = chatInput.trim();
-    if (!text) return;
+    if (!text) {
+      console.log("Input is empty, not sending.");
+      return; // Validate input before sending
+    }
 
     const videoTime = getCurrentVideoTime?.() ?? 0;
-
     const timestamp = Date.now();
     const msg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -123,8 +152,16 @@ export default function ChatSidebar({
       videoTime,
     };
 
-    // Emit matching backend expectations: { roomCode, username, text, timestamp }
-    emitChat({ roomCode, username, text, timestamp });
+    console.log("Calling emitChat with payload:", { roomCode, username, text, timestamp });
+    try {
+      // Emit matching backend expectations: { roomCode, username, text, timestamp }
+      emitChat({ roomCode, username, text, timestamp });
+      console.log("emitChat fired successfully");
+    } catch (error) {
+      console.error("Error calling emitChat:", error);
+    }
+    
+    // Add sent message to state immediately
     setMessages((prev) => [...prev, msg]);
     setChatInput("");
   }, [chatInput, roomCode, username, emitChat, getCurrentVideoTime]);
@@ -134,10 +171,17 @@ export default function ChatSidebar({
     sendMessage();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setChatInput(e.target.value);
+    if (socket && e.target.value.trim() !== "") {
+      socket.emit("typing", { roomCode, username });
     }
   };
 
@@ -296,12 +340,17 @@ export default function ChatSidebar({
         </div>
 
         {/* Chat input */}
+        {typingUsers.size > 0 && (
+          <div className="px-3 py-1 text-[10px] text-gray-500 italic bg-gray-50">
+            {Array.from(typingUsers).join(", ")} {typingUsers.size === 1 ? "is" : "are"} typing...
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="p-3 flex gap-2">
           <input
             id="chat-input"
             type="text"
             value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder="Type a message…"
             maxLength={500}
@@ -311,6 +360,7 @@ export default function ChatSidebar({
             id="send-chat-btn"
             type="submit"
             disabled={!chatInput.trim()}
+            onClick={() => console.log("Send button explicitly clicked")}
             className="px-6 py-3 rounded-lg bg-blue-500 hover:opacity-90 active:opacity-80 disabled:bg-gray-300 disabled:opacity-100 text-white text-sm font-bold"
           >
             Send
