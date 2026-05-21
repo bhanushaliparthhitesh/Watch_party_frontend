@@ -168,6 +168,7 @@ export default function ChatSidebar({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    console.log("Form submitted via handleSubmit");
     sendMessage();
   };
 
