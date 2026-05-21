@@ -86,6 +86,9 @@ export default function RoomPage() {
           } else if (Array.isArray(data)) {
             setParticipants(data);
           }
+          if (data && data.url) {
+            setVideoUrl(data.url);
+          }
         } catch (error) {
           console.error("[Socket] Error handling room-state:", error);
         }

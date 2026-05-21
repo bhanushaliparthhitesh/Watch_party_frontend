@@ -80,8 +80,19 @@ export default function ChatSidebar({
     if (!isConnected) return;
 
     const unsubs = [
-      onEvent<ChatMessage>("chat-message", (msg) => {
-        setMessages((prev) => [...prev, msg]);
+      onEvent<any>("chat-message", (data) => {
+        try {
+          const msg: ChatMessage = {
+            id: crypto.randomUUID(),
+            user: data.username || data.user || "Unknown",
+            text: data.text || "",
+            timestamp: data.timestamp || Date.now(),
+            videoTime: data.videoTime,
+          };
+          setMessages((prev) => [...prev, msg]);
+        } catch (error) {
+          console.error("Error processing chat message", error);
+        }
       }),
       onEvent<{ emoji: string; user: string }>("reaction", (data) => {
         spawnFloatingReaction(data.emoji);
@@ -103,15 +114,17 @@ export default function ChatSidebar({
 
     const videoTime = getCurrentVideoTime?.() ?? 0;
 
+    const timestamp = Date.now();
     const msg: ChatMessage = {
       id: crypto.randomUUID(),
       user: username,
       text,
-      timestamp: Date.now(),
+      timestamp,
       videoTime,
     };
 
-    emitChat({ roomCode, message: msg });
+    // Emit matching backend expectations: { roomCode, username, text, timestamp }
+    emitChat({ roomCode, username, text, timestamp });
     setMessages((prev) => [...prev, msg]);
     setChatInput("");
   }, [chatInput, roomCode, username, emitChat, getCurrentVideoTime]);

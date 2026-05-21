@@ -125,12 +125,14 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       const unsubs = [
         // ── play from backend ───────────────────────────────────────────
-        onEvent<number>("play", (time) => {
+        onEvent<any>("play", (data) => {
+          const time = typeof data === 'number' ? data : data?.time;
+          if (time === undefined) return;
           isSyncingRef.current = true;
           const v = videoRef.current;
           if (v) {
             v.currentTime = time;
-            v.play().catch(() => {});
+            v.play().catch((err) => console.error("Play error:", err));
           }
           expectedTimeRef.current = time;
           expectedTimeUpdatedAtRef.current = Date.now();
@@ -139,7 +141,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         }),
 
         // ── pause from backend ──────────────────────────────────────────
-        onEvent<number>("pause", (time) => {
+        onEvent<any>("pause", (data) => {
+          const time = typeof data === 'number' ? data : data?.time;
+          if (time === undefined) return;
           isSyncingRef.current = true;
           const v = videoRef.current;
           if (v) {
@@ -153,7 +157,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         }),
 
         // ── seek from backend ───────────────────────────────────────────
-        onEvent<number>("seek", (time) => {
+        onEvent<any>("seek", (data) => {
+          const time = typeof data === 'number' ? data : data?.time;
+          if (time === undefined) return;
           isSyncingRef.current = true;
           const v = videoRef.current;
           if (v) v.currentTime = time;
@@ -384,6 +390,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             <video
               ref={videoRef}
               src={videoUrl}
+              crossOrigin="anonymous"
               className="w-full h-full max-h-[calc(100vh-220px)] object-contain"
               onPlay={handlePlay}
               onPause={handlePause}
