@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useSocket } from "@/lib/socket";
+import { useSocketContext } from "@/lib/socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,9 @@ export interface ChatMessage {
   timestamp: number;
   /** Video playback time (in seconds) when the message was sent */
   videoTime?: number;
+  senderId?: string;
+  sequence?: number;
+  status?: "sending" | "sent";
 }
 
 export interface ChatSidebarProps {
@@ -63,7 +66,7 @@ export default function ChatSidebar({
   getCurrentVideoTime,
 }: ChatSidebarProps) {
   // ── Socket ──────────────────────────────────────────────────────────────
-  const { isConnected, emitChat, emitReaction, onEvent, socket } = useSocket();
+  const { isConnected, emitChat, emitReaction, onEvent, socket } = useSocketContext();
 
   // ── Messages ────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -77,50 +80,107 @@ export default function ChatSidebar({
 
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
 
+  // ── Timeouts Tracking ───────────────────────────────────────────────────
+  const timeoutRefs = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  useEffect(() => {
+    return () => {
+      timeoutRefs.current.forEach(clearTimeout);
+      timeoutRefs.current.clear();
+    };
+  }, []);
+
   // ── Listen for incoming chat messages ───────────────────────────────────
   useEffect(() => {
     if (!isConnected) return;
 
     const unsubs = [
       onEvent<any>("chat-message", (data) => {
+        if (!data || typeof data !== "object") return;
         console.log("Received 'chat-message' event:", data);
         try {
-          // If we immediately add our own message to state, we should skip it here to avoid duplicates
-          if (data.username === username || data.user === username) {
-            console.log("Skipping own message to prevent duplicate display");
-            return;
-          }
-          
-          const msg: ChatMessage = {
-            id: crypto.randomUUID(),
-            user: data.username || data.user || "Unknown",
-            text: data.text || "",
-            timestamp: data.timestamp || Date.now(),
-            videoTime: data.videoTime,
-          };
-          setMessages((prev) => [...prev, msg]);
+          const safeText = typeof data.text === "string" ? data.text.slice(0, 500) : "";
+          const safeUser = String(data.senderName || data.username || data.user || "Unknown").slice(0, 50);
+          const safeMessageId = data.messageId ? String(data.messageId).slice(0, 50) : undefined;
+          const safeSenderId = data.senderId ? String(data.senderId).slice(0, 50) : undefined;
+          const safeTimestamp = Number.isFinite(data.timestamp) ? data.timestamp : Date.now();
+          const safeVideoTime = Number.isFinite(data.videoTime) ? data.videoTime : undefined;
+          const safeSequence = Number.isFinite(data.sequence) ? data.sequence : undefined;
+
+          setMessages((prev) => {
+            const sortMsgs = (msgs: ChatMessage[]) => msgs.sort((a, b) => {
+              // 1. Sort by primary sequence if available
+              if (a.sequence !== undefined && b.sequence !== undefined) return a.sequence - b.sequence;
+              // 2. Fallback to timestamp
+              if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+              // 3. Stable tie-break by ID
+              return a.id.localeCompare(b.id);
+            });
+
+            if (safeMessageId) {
+              const existingIdx = prev.findIndex((m) => m.id === safeMessageId);
+              if (existingIdx !== -1) {
+                // Reconcile optimistic message
+                console.log("Reconciling own message with server echo");
+                const updatedMsgs = [...prev];
+                updatedMsgs[existingIdx] = {
+                  ...updatedMsgs[existingIdx],
+                  timestamp: safeTimestamp,
+                  sequence: safeSequence,
+                  status: "sent",
+                  user: safeUser,
+                  senderId: safeSenderId || updatedMsgs[existingIdx].senderId,
+                };
+                return sortMsgs(updatedMsgs);
+              }
+            } else if (safeSenderId && socket?.id && safeSenderId === socket.id) {
+              // Legacy echo with senderId but no messageId. Skip to avoid duplicate bubble.
+              return prev;
+            } else if (!safeMessageId && !safeSenderId && (data.username === username || data.user === username)) {
+              // Legacy fallback
+              return prev;
+            }
+
+            const msg: ChatMessage = {
+              id: safeMessageId || crypto.randomUUID(),
+              user: safeUser,
+              text: safeText,
+              timestamp: safeTimestamp,
+              videoTime: safeVideoTime,
+              senderId: safeSenderId,
+              sequence: safeSequence,
+              status: "sent",
+            };
+            return sortMsgs([...prev, msg]);
+          });
         } catch (error) {
           console.error("Error processing chat message", error);
         }
       }),
-      onEvent<{ emoji: string; user: string }>("reaction", (data) => {
-        spawnFloatingReaction(data.emoji);
+      onEvent<any>("reaction", (data) => {
+        if (!data || typeof data !== "object" || typeof data.emoji !== "string") return;
+        const safeEmoji = data.emoji.slice(0, 10);
+        spawnFloatingReaction(safeEmoji);
       }),
-      onEvent<{ username: string }>("typing", (data) => {
-        if (data.username && data.username !== username) {
+      onEvent<any>("typing", (data) => {
+        if (!data || typeof data !== "object" || typeof data.username !== "string") return;
+        const safeUsername = data.username.slice(0, 50);
+        if (safeUsername && safeUsername !== username) {
           setTypingUsers((prev) => {
             const next = new Set(prev);
-            next.add(data.username);
+            next.add(safeUsername);
             return next;
           });
           // Clear typing indicator after 3 seconds
-          setTimeout(() => {
+          const timeoutId = setTimeout(() => {
             setTypingUsers((prev) => {
               const next = new Set(prev);
-              next.delete(data.username);
+              next.delete(safeUsername);
               return next;
             });
+            timeoutRefs.current.delete(timeoutId);
           }, 3000);
+          timeoutRefs.current.add(timeoutId);
         }
       }),
     ];
@@ -144,18 +204,21 @@ export default function ChatSidebar({
 
     const videoTime = getCurrentVideoTime?.() ?? 0;
     const timestamp = Date.now();
+    const messageId = crypto.randomUUID();
     const msg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: messageId,
       user: username,
       text,
       timestamp,
       videoTime,
+      senderId: socket?.id,
+      status: "sending",
     };
 
-    console.log("Calling emitChat with payload:", { roomCode, username, text, timestamp });
+    console.log("Calling emitChat with payload:", { roomCode, username, text, timestamp, messageId });
     try {
-      // Emit matching backend expectations: { roomCode, username, text, timestamp }
-      emitChat({ roomCode, username, text, timestamp });
+      // Emit matching backend expectations: { roomCode, username, text, timestamp, messageId }
+      emitChat({ roomCode, username, text, timestamp, messageId });
       console.log("emitChat fired successfully");
     } catch (error) {
       console.error("Error calling emitChat:", error);
@@ -192,9 +255,11 @@ export default function ChatSidebar({
     const x = 10 + Math.random() * 80;
     const y = Math.random() * 40;
     setFloatingReactions((prev) => [...prev, { id, emoji, x, y }]);
-    setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
+      timeoutRefs.current.delete(timeoutId);
     }, 2000);
+    timeoutRefs.current.add(timeoutId);
   }, []);
 
   const handleReaction = useCallback(
@@ -279,7 +344,7 @@ export default function ChatSidebar({
         )}
 
         {messages.map((msg) => {
-          const isMe = msg.user === username;
+          const isMe = (msg.senderId && socket?.id) ? msg.senderId === socket.id : msg.user === username;
           return (
             <div
               key={msg.id}
@@ -307,9 +372,9 @@ export default function ChatSidebar({
 
               {/* Message bubble */}
               <div
-                className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm leading-snug break-words border border-gray-200 bg-white hover:bg-gray-100 text-gray-800 ${
+                className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm leading-snug break-words border border-gray-200 transition-opacity ${
                   isMe ? "rounded-tr-sm" : "rounded-tl-sm"
-                }`}
+                } ${msg.status === "sending" ? "bg-white/50 opacity-70" : "bg-white hover:bg-gray-100"} text-gray-800`}
               >
                 {msg.text}
               </div>

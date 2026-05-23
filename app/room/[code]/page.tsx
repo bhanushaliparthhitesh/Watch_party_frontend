@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useSocket } from "@/lib/socket";
+import { SocketProvider, useSocketContext } from "@/lib/socket";
 import VideoPlayer, { VideoPlayerHandle } from "@/components/VideoPlayer";
 import VideoURLSelector from "@/components/VideoURLSelector";
 import ChatSidebar, { Participant } from "@/components/ChatSidebar";
@@ -19,7 +19,7 @@ function timeAgo(ts: number): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function RoomPage() {
+function RoomContent() {
   const { code } = useParams<{ code: string }>();
   const router = useRouter();
 
@@ -30,7 +30,8 @@ export default function RoomPage() {
     joinRoom,
     emitVideoSource,
     onEvent,
-  } = useSocket();
+    socket,
+  } = useSocketContext();
 
   // ── Connection states ───────────────────────────────────────────────────
   const [hasJoined, setHasJoined] = useState(false);
@@ -47,6 +48,13 @@ export default function RoomPage() {
   // ── Video URL (shared state managed here, player handles playback) ─────
   const [videoUrl, setVideoUrl] = useState("");
 
+  // ── Initial Sync State ──────────────────────────────────────────────────
+  const [initialSync, setInitialSync] = useState<{
+    time: number;
+    playing: boolean;
+    updatedAt: number;
+  } | null>(null);
+
   // ── Participants ────────────────────────────────────────────────────────
   const [participants, setParticipants] = useState<Participant[]>([]);
 
@@ -56,14 +64,19 @@ export default function RoomPage() {
   // ── Clipboard ───────────────────────────────────────────────────────────
   const [copied, setCopied] = useState(false);
 
+  const lastJoinedSocketId = useRef<string | null>(null);
+
   // ── Join room on connect ────────────────────────────────────────────────
   useEffect(() => {
-    if (isConnected && !hasJoined) {
+    if (isConnected && socket?.id && lastJoinedSocketId.current !== socket.id) {
       joinRoom({ roomCode: code, username });
-      setHasJoined(true);
+      lastJoinedSocketId.current = socket.id;
+      if (!hasJoined) {
+        setHasJoined(true);
+      }
       setConnectionError(false);
     }
-  }, [isConnected, hasJoined, joinRoom, code, username]);
+  }, [isConnected, socket?.id, hasJoined, joinRoom, code, username]);
 
   // ── Detect connection failure ───────────────────────────────────────────
   useEffect(() => {
@@ -88,6 +101,13 @@ export default function RoomPage() {
           }
           if (data && data.url) {
             setVideoUrl(data.url);
+          }
+          if (data && typeof data.time === "number") {
+            setInitialSync({
+              time: data.time,
+              playing: data.playing || false,
+              updatedAt: data.updatedAt || Date.now(),
+            });
           }
         } catch (error) {
           console.error("[Socket] Error handling room-state:", error);
@@ -303,6 +323,7 @@ export default function RoomPage() {
             ref={playerRef}
             roomCode={code}
             videoUrl={videoUrl}
+            initialSync={initialSync}
           />
         </section>
 
@@ -314,5 +335,13 @@ export default function RoomPage() {
         />
       </div>
     </div>
+  );
+}
+
+export default function RoomPage() {
+  return (
+    <SocketProvider>
+      <RoomContent />
+    </SocketProvider>
   );
 }

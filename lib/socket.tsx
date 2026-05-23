@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, createContext, useContext, ReactNode } from "react";
 import { io, Socket } from "socket.io-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,6 +29,11 @@ export interface ChatPayload {
   username: string;
   text: string;
   timestamp: number | string;
+  messageId?: string;
+  senderId?: string;
+  senderName?: string;
+  videoTime?: number;
+  sequence?: number;
 }
 
 /** Payload for reactions (emoji bursts, etc.) */
@@ -72,6 +77,21 @@ export interface UseSocketReturn {
   // ── Listener helper ───────────────────────────────────────────────────
   /** Subscribe to a server event. Returns an unsubscribe function. */
   onEvent: <T = unknown>(event: string, handler: (data: T) => void) => () => void;
+}
+
+export const SocketContext = createContext<UseSocketReturn | null>(null);
+
+export function useSocketContext(): UseSocketReturn {
+  const context = useContext(SocketContext);
+  if (!context) {
+    throw new Error("useSocketContext must be used within a SocketProvider");
+  }
+  return context;
+}
+
+export function SocketProvider({ children }: { children: ReactNode }) {
+  const socketValue = useSocket();
+  return <SocketContext.Provider value={socketValue}>{children}</SocketContext.Provider>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────

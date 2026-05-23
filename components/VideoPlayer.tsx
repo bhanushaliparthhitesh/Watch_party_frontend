@@ -8,7 +8,7 @@ import {
   forwardRef,
   useImperativeHandle,
 } from "react";
-import { useSocket } from "@/lib/socket";
+import { useSocketContext } from "@/lib/socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,6 +17,8 @@ export interface VideoPlayerProps {
   roomCode: string;
   /** The direct URL of the video to play */
   videoUrl: string;
+  /** Initial sync snapshot applied immediately upon load */
+  initialSync?: { time: number; playing: boolean; updatedAt: number } | null;
 }
 
 export interface VideoPlayerHandle {
@@ -78,7 +80,7 @@ const DRIFT_THRESHOLD_S = 0.5; // correct if > 0.5 s off
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
-  function VideoPlayer({ roomCode, videoUrl }, ref) {
+  function VideoPlayer({ roomCode, videoUrl, initialSync }, ref) {
     // ── Refs ────────────────────────────────────────────────────────────
     const videoRef = useRef<HTMLVideoElement>(null);
     const isSyncingRef = useRef(false); // true while applying a backend event
@@ -88,7 +90,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
     // ── Socket ──────────────────────────────────────────────────────────
     const { isConnected, emitPlay, emitPause, emitSeek, onEvent, socket } =
-      useSocket();
+      useSocketContext();
 
     // ── State ───────────────────────────────────────────────────────────
     const [playing, setPlaying] = useState(false);
@@ -116,6 +118,50 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       setVideoError(null);
     }, [videoUrl]);
 
+    // ── Initial Sync Application ────────────────────────────────────────
+    const appliedSyncRef = useRef(false);
+    const lastVersionRef = useRef(0);
+
+    useEffect(() => {
+      appliedSyncRef.current = false;
+    }, [initialSync]);
+
+    const applyInitialSync = useCallback(() => {
+      const v = videoRef.current;
+      if (!initialSync || appliedSyncRef.current || !v) return;
+      if (v.readyState < 1) return; // Wait for metadata
+
+      appliedSyncRef.current = true;
+      isSyncingRef.current = true;
+
+      if ((initialSync as any).version !== undefined) {
+        lastVersionRef.current = (initialSync as any).version;
+      }
+
+      const elapsed = (Date.now() - initialSync.updatedAt) / 1000;
+      const expectedTime = initialSync.playing ? initialSync.time + Math.max(0, elapsed) : initialSync.time;
+
+      v.currentTime = expectedTime;
+      expectedTimeRef.current = expectedTime;
+      expectedTimeUpdatedAtRef.current = Date.now();
+
+      if (initialSync.playing) {
+        v.play().catch((err) => console.error("Initial play error:", err));
+        setPlaying(true);
+      } else {
+        v.pause();
+        setPlaying(false);
+      }
+
+      setTimeout(() => {
+        isSyncingRef.current = false;
+      }, 500);
+    }, [initialSync]);
+
+    useEffect(() => {
+      applyInitialSync();
+    }, [applyInitialSync]);
+
     // ════════════════════════════════════════════════════════════════════
     // Socket event listeners
     // ════════════════════════════════════════════════════════════════════
@@ -123,9 +169,26 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     useEffect(() => {
       if (!isConnected) return;
 
+      const checkFreshness = (data: any) => {
+        if (!data) return true;
+        const version = data.version;
+        if (version !== undefined) {
+          if (version < lastVersionRef.current) {
+            console.log("Ignoring stale sync event", version, "vs current", lastVersionRef.current);
+            return false;
+          }
+          lastVersionRef.current = version;
+        }
+        if (data.senderId && socket?.id && data.senderId === socket.id) {
+          return false; // Ignore own echoes locally
+        }
+        return true;
+      };
+
       const unsubs = [
         // ── play from backend ───────────────────────────────────────────
         onEvent<any>("play", (data) => {
+          if (!checkFreshness(data)) return;
           const time = typeof data === 'number' ? data : data?.time;
           if (time === undefined) return;
           isSyncingRef.current = true;
@@ -142,6 +205,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
         // ── pause from backend ──────────────────────────────────────────
         onEvent<any>("pause", (data) => {
+          if (!checkFreshness(data)) return;
           const time = typeof data === 'number' ? data : data?.time;
           if (time === undefined) return;
           isSyncingRef.current = true;
@@ -158,6 +222,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
         // ── seek from backend ───────────────────────────────────────────
         onEvent<any>("seek", (data) => {
+          if (!checkFreshness(data)) return;
           const time = typeof data === 'number' ? data : data?.time;
           if (time === undefined) return;
           isSyncingRef.current = true;
@@ -169,9 +234,10 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         }),
 
         // ── sync-correction from backend ────────────────────────────────
-        onEvent<{ time: number; playing: boolean }>(
+        onEvent<any>(
           "sync-correction",
           (data) => {
+            if (!checkFreshness(data)) return;
             isSyncingRef.current = true;
             const v = videoRef.current;
             
@@ -285,7 +351,8 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const handleLoadedMetadata = useCallback(() => {
       setDuration(videoRef.current?.duration ?? 0);
       setVideoError(null);
-    }, []);
+      applyInitialSync();
+    }, [applyInitialSync]);
 
     const handleVideoError = useCallback(() => {
       const v = videoRef.current;
